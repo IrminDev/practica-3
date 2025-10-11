@@ -21,6 +21,8 @@ export const getFileType = (filename: string, isDirectory: boolean): string => {
     json: 'text',
     xml: 'text',
     csv: 'text',
+    rtf: 'text',
+    tex: 'text',
     
     // Imágenes
     jpg: 'image',
@@ -30,8 +32,14 @@ export const getFileType = (filename: string, isDirectory: boolean): string => {
     bmp: 'image',
     webp: 'image',
     svg: 'image',
+    ico: 'image',
+    tiff: 'image',
+    tif: 'image',
+    heic: 'image',
+    heif: 'image',
+    raw: 'image',
     
-    // Documentos
+    // Documentos - Office
     pdf: 'document',
     doc: 'document',
     docx: 'document',
@@ -39,6 +47,15 @@ export const getFileType = (filename: string, isDirectory: boolean): string => {
     xlsx: 'document',
     ppt: 'document',
     pptx: 'document',
+    odt: 'document',
+    ods: 'document',
+    odp: 'document',
+    
+    // Documentos - Ebook
+    epub: 'document',
+    mobi: 'document',
+    azw: 'document',
+    azw3: 'document',
     
     // Video
     mp4: 'video',
@@ -46,6 +63,13 @@ export const getFileType = (filename: string, isDirectory: boolean): string => {
     mkv: 'video',
     mov: 'video',
     wmv: 'video',
+    flv: 'video',
+    webm: 'video',
+    m4v: 'video',
+    '3gp': 'video',
+    '3g2': 'video',
+    mpeg: 'video',
+    mpg: 'video',
     
     // Audio
     mp3: 'audio',
@@ -53,6 +77,10 @@ export const getFileType = (filename: string, isDirectory: boolean): string => {
     flac: 'audio',
     aac: 'audio',
     ogg: 'audio',
+    m4a: 'audio',
+    wma: 'audio',
+    opus: 'audio',
+    oga: 'audio',
     
     // Archivos comprimidos
     zip: 'archive',
@@ -60,6 +88,10 @@ export const getFileType = (filename: string, isDirectory: boolean): string => {
     '7z': 'archive',
     tar: 'archive',
     gz: 'archive',
+    bz2: 'archive',
+    xz: 'archive',
+    iso: 'archive',
+    dmg: 'archive',
     
     // Código
     js: 'code',
@@ -70,8 +102,37 @@ export const getFileType = (filename: string, isDirectory: boolean): string => {
     java: 'code',
     cpp: 'code',
     c: 'code',
+    h: 'code',
+    hpp: 'code',
+    cs: 'code',
+    php: 'code',
+    rb: 'code',
+    go: 'code',
+    rs: 'code',
+    swift: 'code',
+    kt: 'code',
+    scala: 'code',
     html: 'code',
     css: 'code',
+    scss: 'code',
+    sass: 'code',
+    less: 'code',
+    sql: 'code',
+    sh: 'code',
+    bat: 'code',
+    ps1: 'code',
+    
+    // Aplicaciones Android
+    apk: 'application',
+    
+    // Otros formatos comunes
+    torrent: 'other',
+    pkg: 'application',
+    deb: 'application',
+    rpm: 'application',
+    exe: 'application',
+    msi: 'application',
+    app: 'application',
   };
   
   return typeMap[extension] || 'unknown';
@@ -161,18 +222,48 @@ export const getBreadcrumbs = (path: string): { name: string; path: string }[] =
     return [{ name: 'Inicio', path: '/' }];
   }
   
-  const parts = path.split('/').filter(Boolean);
-  const breadcrumbs: { name: string; path: string }[] = [
-    { name: 'Inicio', path: '/' }
-  ];
+  // Manejar rutas de Android (file:///storage/emulated/0/)
+  let normalizedPath = path;
+  let isAndroidPath = false;
   
-  let currentPath = '';
-  for (const part of parts) {
-    currentPath += '/' + part;
-    breadcrumbs.push({
-      name: part,
-      path: currentPath
+  if (path.startsWith('file:///storage/emulated/0/')) {
+    normalizedPath = path.replace('file:///storage/emulated/0/', '');
+    isAndroidPath = true;
+  } else if (path.startsWith('file://')) {
+    normalizedPath = path.replace('file://', '');
+  }
+  
+  const parts = normalizedPath.split('/').filter(Boolean);
+  const breadcrumbs: { name: string; path: string }[] = [];
+  
+  if (isAndroidPath) {
+    // Para Android, el primer breadcrumb es "0" (root del almacenamiento)
+    breadcrumbs.push({ 
+      name: '0', 
+      path: 'file:///storage/emulated/0/' 
     });
+    
+    // Agregar el resto de las partes
+    let currentPath = 'file:///storage/emulated/0';
+    for (const part of parts) {
+      currentPath += '/' + part;
+      breadcrumbs.push({
+        name: part,
+        path: currentPath
+      });
+    }
+  } else {
+    // Para otras plataformas
+    breadcrumbs.push({ name: 'Inicio', path: '/' });
+    
+    let currentPath = '';
+    for (const part of parts) {
+      currentPath += '/' + part;
+      breadcrumbs.push({
+        name: part,
+        path: currentPath
+      });
+    }
   }
   
   return breadcrumbs;
