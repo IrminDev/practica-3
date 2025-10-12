@@ -27,7 +27,19 @@
         "WRITE_EXTERNAL_STORAGE",
         "READ_MEDIA_IMAGES",
         "READ_MEDIA_VIDEO",
-        "READ_MEDIA_AUDIO"
+        "READ_MEDIA_AUDIO",
+        "MANAGE_EXTERNAL_STORAGE",
+        "MANAGE_MEDIA"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": {
+            "scheme": "content",
+            "mimeType": "*/*"
+          }
+        }
       ]
     },
     "web": {
@@ -47,7 +59,8 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "./plugins/withAndroidFileProvider.js"
     ],
     "experiments": {
       "typedRoutes": true,

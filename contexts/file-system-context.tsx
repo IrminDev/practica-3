@@ -1,9 +1,11 @@
 import { FileItem, ViewMode } from '@/types/file-system';
+import { getEnvironmentInfo, isExpoGo } from '@/utils/environment';
 import { getFileType, sortFiles } from '@/utils/file-utils';
 import { getSettings, saveSettings } from '@/utils/storage';
 import { Directory, File, Paths } from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
 import React, { createContext, ReactNode, useContext, useEffect, useState } from 'react';
-import { Alert, PermissionsAndroid, Platform } from 'react-native';
+import { Alert, Linking, PermissionsAndroid, Platform } from 'react-native';
 
 interface FileSystemContextType {
   currentPath: string;
@@ -26,14 +28,18 @@ interface FileSystemContextType {
 const FileSystemContext = createContext<FileSystemContextType | undefined>(undefined);
 
 export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
-  // En Android, el almacenamiento interno está en /storage/emulated/0/
-  // Esta es la carpeta "home" donde están Downloads, Documents, DCIM, etc.
+  // Determinar el directorio home según el entorno
   const getHomeDirectory = (): string => {
+    // En Expo Go, usar el directorio de documentos de la app
+    if (isExpoGo()) {
+      return Paths.document.uri;
+    }
+    
     if (Platform.OS === 'android') {
-      // Intentar usar el directorio de almacenamiento externo
-      // En Android, esto apunta a /storage/emulated/0/
+      // En APK standalone, usar el almacenamiento externo
       return 'file:///storage/emulated/0/';
     }
+    
     // Para otras plataformas, usar el directorio de documentos
     return Paths.document.uri;
   };
@@ -44,10 +50,25 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [homeDirectory] = useState<string>(getHomeDirectory());
+  const [runningInExpoGo] = useState<boolean>(isExpoGo());
 
   useEffect(() => {
     loadSettings();
     requestPermissions();
+    
+    // Log del entorno para debugging
+    const envInfo = getEnvironmentInfo();
+    console.log('🔍 === INICIALIZANDO FILE SYSTEM CONTEXT ===');
+    console.log('🔍 Información del entorno:', envInfo);
+    console.log('🔍 runningInExpoGo (useState):', runningInExpoGo);
+    console.log('🔍 isExpoGo() (función directa):', isExpoGo());
+    
+    if (runningInExpoGo) {
+      console.warn('⚠️ CORRIENDO EN EXPO GO: Funcionalidad limitada de file system');
+      console.log('💡 Para ver todos los archivos, construye un APK standalone');
+    } else {
+      console.log('✅ CORRIENDO EN APK STANDALONE: Acceso completo al file system');
+    }
   }, []);
 
   useEffect(() => {
@@ -70,27 +91,78 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
   const requestPermissions = async (): Promise<boolean> => {
     if (Platform.OS === 'android') {
       try {
-        if (Platform.Version >= 33) {
-          // Android 13+ requiere permisos específicos por tipo de medio
-          const granted = await PermissionsAndroid.requestMultiple([
-            PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
-            PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
-            PermissionsAndroid.PERMISSIONS.READ_MEDIA_AUDIO,
-          ]);
-          return Object.values(granted).every(
-            status => status === PermissionsAndroid.RESULTS.GRANTED
+        // Si estamos en Expo Go, solicitar permisos de MediaLibrary
+        if (runningInExpoGo) {
+          const { status } = await MediaLibrary.requestPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert(
+              'Permisos necesarios',
+              'Esta aplicación necesita acceso a tus archivos multimedia para funcionar correctamente en Expo Go.'
+            );
+            return false;
+          }
+          return true;
+        }
+        
+        // En APK standalone, solicitar permisos según la versión de Android
+        if (Platform.Version >= 30) {
+          // Android 11+ requiere MANAGE_EXTERNAL_STORAGE para acceso completo
+          // Primero verificar si ya tenemos el permiso
+          console.log('📋 Android 11+: Verificando MANAGE_EXTERNAL_STORAGE');
+          
+          // Solicitar permisos de medios primero (Android 13+)
+          if (Platform.Version >= 33) {
+            const mediaGranted = await PermissionsAndroid.requestMultiple([
+              PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+              PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
+              PermissionsAndroid.PERMISSIONS.READ_MEDIA_AUDIO,
+            ]);
+            console.log('📋 Permisos de medios solicitados (Android 13+):', mediaGranted);
+          }
+          
+          // Mostrar alerta para dirigir a configuración y otorgar MANAGE_EXTERNAL_STORAGE
+          Alert.alert(
+            'Acceso completo a archivos',
+            'Para ver TODOS los tipos de archivos (PDF, documentos, etc.), necesitas otorgar acceso completo al almacenamiento.\n\n' +
+            'En la siguiente pantalla:\n' +
+            '1. Busca "practica-3"\n' +
+            '2. Activa "Permitir acceso a todos los archivos"',
+            [
+              {
+                text: 'Cancelar',
+                style: 'cancel',
+                onPress: () => {
+                  console.log('⚠️ Usuario canceló permisos completos');
+                }
+              },
+              {
+                text: 'Abrir Configuración',
+                onPress: async () => {
+                  try {
+                    await Linking.openSettings();
+                  } catch (error) {
+                    console.error('❌ Error abriendo configuración:', error);
+                  }
+                }
+              }
+            ]
           );
+          
+          return true;
         } else if (Platform.Version >= 30) {
           // Android 11-12 usa Scoped Storage
-          // Solicitar permisos de lectura/escritura para acceder a /storage/emulated/0/
           const readGranted = await PermissionsAndroid.request(
             PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE
           );
           const writeGranted = await PermissionsAndroid.request(
             PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
           );
-          return readGranted === PermissionsAndroid.RESULTS.GRANTED &&
-                 writeGranted === PermissionsAndroid.RESULTS.GRANTED;
+          
+          const allGranted = readGranted === PermissionsAndroid.RESULTS.GRANTED &&
+                            writeGranted === PermissionsAndroid.RESULTS.GRANTED;
+          
+          console.log('📋 Permisos solicitados (Android 11-12):', { readGranted, writeGranted });
+          return allGranted;
         } else {
           // Android 10 y anteriores
           const granted = await PermissionsAndroid.request(
@@ -99,8 +171,12 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
           const writeGranted = await PermissionsAndroid.request(
             PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
           );
-          return granted === PermissionsAndroid.RESULTS.GRANTED &&
-                 writeGranted === PermissionsAndroid.RESULTS.GRANTED;
+          
+          const allGranted = granted === PermissionsAndroid.RESULTS.GRANTED &&
+                            writeGranted === PermissionsAndroid.RESULTS.GRANTED;
+          
+          console.log('📋 Permisos solicitados (Android 10-):', { granted, writeGranted });
+          return allGranted;
         }
       } catch (err) {
         console.error('Error requesting permissions:', err);
@@ -120,12 +196,10 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
       return accessiblePaths.some(allowedPath => path.startsWith(allowedPath));
     }
 
-    // En Android, permitir acceso solo dentro del directorio home (/storage/emulated/0/)
-    // y sus subdirectorios (Download, Documents, DCIM, Pictures, Music, etc.)
+    // En Android APK, permitir acceso solo dentro del directorio home (/storage/emulated/0/)
     const androidHomePath = 'file:///storage/emulated/0/';
     
     // Verificar que el path esté dentro del directorio home
-    // y no intentar navegar fuera de él (evitar ../ o paths absolutos fuera)
     if (!path.startsWith(androidHomePath)) {
       return false;
     }
@@ -144,6 +218,74 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
     setError(null);
 
     try {
+      console.log('🔍 loadFiles - runningInExpoGo:', runningInExpoGo);
+      console.log('🔍 loadFiles - Platform:', Platform.OS);
+      console.log('🔍 loadFiles - path:', path);
+      
+      // En Expo Go, usar MediaLibrary para listar archivos multimedia
+      if (runningInExpoGo && Platform.OS === 'android') {
+        console.log('📱 Usando MediaLibrary en Expo Go (modo limitado)');
+        
+        // Obtener assets de la galería
+        const { status } = await MediaLibrary.getPermissionsAsync();
+        if (status !== 'granted') {
+          const { status: newStatus } = await MediaLibrary.requestPermissionsAsync();
+          if (newStatus !== 'granted') {
+            throw new Error('Se necesitan permisos para acceder a archivos multimedia');
+          }
+        }
+
+        // Obtener los primeros 100 archivos multimedia
+        const media = await MediaLibrary.getAssetsAsync({
+          first: 100,
+          mediaType: [
+            MediaLibrary.MediaType.photo,
+            MediaLibrary.MediaType.video,
+            MediaLibrary.MediaType.audio,
+          ],
+          sortBy: [MediaLibrary.SortBy.modificationTime],
+        });
+
+        const fileItems: FileItem[] = media.assets.map((asset) => {
+          // Determinar el tipo basado en mediaType
+          let type: string;
+          if (asset.mediaType === MediaLibrary.MediaType.photo) {
+            type = 'image';
+          } else if (asset.mediaType === MediaLibrary.MediaType.video) {
+            type = 'video';
+          } else if (asset.mediaType === MediaLibrary.MediaType.audio) {
+            type = 'audio';
+          } else {
+            type = 'unknown';
+          }
+
+          return {
+            name: asset.filename,
+            path: asset.uri,
+            uri: asset.uri,
+            isDirectory: false,
+            size: undefined,
+            modificationTime: asset.modificationTime,
+            type: type,
+          };
+        });
+
+        setFiles(sortFiles(fileItems));
+        
+        if (fileItems.length === 0) {
+          Alert.alert(
+            'Expo Go - Limitaciones',
+            'Expo Go solo puede mostrar archivos multimedia (fotos, videos, audio). Para ver todos los archivos, construye un APK standalone con "eas build".',
+            [{ text: 'Entendido' }]
+          );
+        }
+        
+        setLoading(false);
+        return;
+      }
+
+      console.log('📁 Usando acceso directo al file system (APK standalone)');
+      
       // Verificar si tenemos permisos para acceder a este path en Android
       if (Platform.OS === 'android' && !isAccessiblePath(path)) {
         throw new Error('No tiene permisos para acceder a este directorio');
@@ -154,13 +296,19 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
       if (!directory.exists) {
         setError('El directorio no existe');
         setFiles([]);
+        setLoading(false);
         return;
       }
 
+      console.log('📂 Listando archivos en:', path);
       const items = directory.list();
+      console.log('📊 Total de items encontrados:', items.length);
       
       const fileItems: FileItem[] = items.map((item) => {
         const isDir = item instanceof Directory;
+        const fileType = getFileType(item.name, isDir);
+        
+        console.log(`   📄 ${item.name} -> tipo: ${fileType}`);
         
         return {
           name: item.name,
@@ -169,10 +317,13 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
           isDirectory: isDir,
           size: isDir ? undefined : (item as File).size,
           modificationTime: undefined, // No disponible en nueva API
-          type: getFileType(item.name, isDir), // Agregar el tipo de archivo
+          type: fileType, // IMPORTANTE: Agregar el tipo de archivo
         };
       });
 
+      console.log('✅ Total de archivos mapeados:', fileItems.length);
+      console.log('📋 Tipos encontrados:', [...new Set(fileItems.map(f => f.type))].join(', '));
+      
       setFiles(sortFiles(fileItems));
     } catch (err: any) {
       console.error('Error loading files:', err);
@@ -254,69 +405,32 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
 
   const createFolder = async (name: string): Promise<boolean> => {
     try {
-      // Verificar permisos antes de crear carpeta en Android
-      if (Platform.OS === 'android' && !isAccessiblePath(currentPath)) {
-        throw new Error('No tiene permisos para crear carpetas en este directorio');
-      }
-
       const newDir = new Directory(currentPath, name);
       newDir.create();
       await refreshFiles();
       return true;
     } catch (err: any) {
       console.error('Error creating folder:', err);
-      const errorMessage = err.message || 'Error al crear carpeta';
-      setError(errorMessage);
-      
-      if (errorMessage.includes('permisos') || errorMessage.includes('permission')) {
-        if (Platform.OS === 'android' || Platform.OS === 'ios') {
-          Alert.alert(
-            'Acceso Denegado',
-            'No tiene permisos para crear carpetas en este directorio.',
-            [{ text: 'OK' }]
-          );
-        }
-      }
+      setError(err.message || 'Error al crear carpeta');
       return false;
     }
   };
 
   const deleteItem = async (path: string): Promise<boolean> => {
     try {
-      // Verificar permisos antes de eliminar en Android
-      if (Platform.OS === 'android' && !isAccessiblePath(path)) {
-        throw new Error('No tiene permisos para eliminar en este directorio');
-      }
-
       const item = path.includes('.') ? new File(path) : new Directory(path);
       item.delete();
       await refreshFiles();
       return true;
     } catch (err: any) {
       console.error('Error deleting item:', err);
-      const errorMessage = err.message || 'Error al eliminar';
-      setError(errorMessage);
-      
-      if (errorMessage.includes('permisos') || errorMessage.includes('permission')) {
-        if (Platform.OS === 'android' || Platform.OS === 'ios') {
-          Alert.alert(
-            'Acceso Denegado',
-            'No tiene permisos para eliminar elementos en este directorio.',
-            [{ text: 'OK' }]
-          );
-        }
-      }
+      setError(err.message || 'Error al eliminar');
       return false;
     }
   };
 
   const renameItem = async (oldPath: string, newName: string): Promise<boolean> => {
     try {
-      // Verificar permisos antes de renombrar en Android
-      if (Platform.OS === 'android' && !isAccessiblePath(oldPath)) {
-        throw new Error('No tiene permisos para renombrar en este directorio');
-      }
-
       const isDir = !oldPath.includes('.');
       const oldItem = isDir ? new Directory(oldPath) : new File(oldPath);
       const parent = isDir ? (oldItem as Directory).parentDirectory : (oldItem as File).parentDirectory;
@@ -327,31 +441,13 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
       return true;
     } catch (err: any) {
       console.error('Error renaming item:', err);
-      const errorMessage = err.message || 'Error al renombrar';
-      setError(errorMessage);
-      
-      if (errorMessage.includes('permisos') || errorMessage.includes('permission')) {
-        if (Platform.OS === 'android' || Platform.OS === 'ios') {
-          Alert.alert(
-            'Acceso Denegado',
-            'No tiene permisos para renombrar elementos en este directorio.',
-            [{ text: 'OK' }]
-          );
-        }
-      }
+      setError(err.message || 'Error al renombrar');
       return false;
     }
   };
 
   const copyItem = async (sourcePath: string, destinationPath: string): Promise<boolean> => {
     try {
-      // Verificar permisos antes de copiar en Android
-      if (Platform.OS === 'android') {
-        if (!isAccessiblePath(sourcePath) || !isAccessiblePath(destinationPath)) {
-          throw new Error('No tiene permisos para copiar desde/hacia este directorio');
-        }
-      }
-
       const source = new File(sourcePath);
       const destination = new File(destinationPath);
       source.copy(destination);
@@ -359,31 +455,13 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
       return true;
     } catch (err: any) {
       console.error('Error copying item:', err);
-      const errorMessage = err.message || 'Error al copiar';
-      setError(errorMessage);
-      
-      if (errorMessage.includes('permisos') || errorMessage.includes('permission')) {
-        if (Platform.OS === 'android' || Platform.OS === 'ios') {
-          Alert.alert(
-            'Acceso Denegado',
-            'No tiene permisos para copiar elementos en estos directorios.',
-            [{ text: 'OK' }]
-          );
-        }
-      }
+      setError(err.message || 'Error al copiar');
       return false;
     }
   };
 
   const moveItem = async (sourcePath: string, destinationPath: string): Promise<boolean> => {
     try {
-      // Verificar permisos antes de mover en Android
-      if (Platform.OS === 'android') {
-        if (!isAccessiblePath(sourcePath) || !isAccessiblePath(destinationPath)) {
-          throw new Error('No tiene permisos para mover desde/hacia este directorio');
-        }
-      }
-
       const isDir = !sourcePath.includes('.');
       const source = isDir ? new Directory(sourcePath) : new File(sourcePath);
       const destination = isDir ? new Directory(destinationPath) : new File(destinationPath);
@@ -392,18 +470,7 @@ export const FileSystemProvider = ({ children }: { children: ReactNode }) => {
       return true;
     } catch (err: any) {
       console.error('Error moving item:', err);
-      const errorMessage = err.message || 'Error al mover';
-      setError(errorMessage);
-      
-      if (errorMessage.includes('permisos') || errorMessage.includes('permission')) {
-        if (Platform.OS === 'android' || Platform.OS === 'ios') {
-          Alert.alert(
-            'Acceso Denegado',
-            'No tiene permisos para mover elementos en estos directorios.',
-            [{ text: 'OK' }]
-          );
-        }
-      }
+      setError(err.message || 'Error al mover');
       return false;
     }
   };
